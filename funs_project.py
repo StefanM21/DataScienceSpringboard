@@ -1,79 +1,73 @@
 # -*- coding: utf-8 -*-
 """
-Created on Thu Oct 31 09:35:24 2019
+Created on Mon Dec  2 18:50:04 2019
 
 @author: SMA
 """
 
-def cleanAge(x):
-    if isinstance(x,int):
-        return(x)
-    elif isinstance(x,str):
-        vor = x.rsplit(" ")
-        if "n" in x.lower():
-            return(np.nan)
-        else:
-            return([int(s) for s in vor if s!=""][0])
-            
-    
-def naCounts(df):
-    out_di = defaultdict(list) 
-    for i,k in df.iteritems():
-        na_vec = pd.isna(k)
-        ratio=sum(na_vec)/len(na_vec)
-        out_di[i].extend([ratio,na_vec])
-        print("Nas of {}: {}".format(i,ratio))
-    return(out_di) 
-    
-#container = {"Product":list(),"reI":list(),"Date":list(),"id":list(),"ProductN":list(),"reIN":list()}  
-    
-def targetS(ix,container,sub):
-    sshape = sub.shape[0]
-    datevals = sub.index.values
-    for k in range(1,sshape):
-        ref = sub.iloc[k-1]
-        comp = sub.iloc[k]
-        bols = comp != ref
-        ixx =100
-        name_vals = " "
-        ixn = 100
-        name_vals_n=" "
-        
-        bolsp = (bols==True) & (comp[bols]==1)
-        bolsn = (bols==True) & (comp[bols]==0)
-        if sum(bolsp) >0: 
-            name_vals = comp[bolsp].index.values.tolist()[0]
-            ixx = np.where(bolsp==True)[0].tolist()[0]
-        if sum(bolsn) >0:
-            name_vals_n = comp[bolsn].index.values.tolist()
-            ixn = np.where(bolsn==True)[0].tolist()[0]
-        #print(ixn)
-        container["Product"].append(name_vals[0])
-        container["reI"].append(ixx)        
-        container["reIN"].append(ixn)
-        container["Date"].append(datevals[k-1])
-        container["id"].append(ix)
-        container["ProductN"].append(name_vals_n[0])
-        
-
-def na_dropper(df,col,find_alt=False):
-    """ functions looks up nas in col and deletes rows by id"""
-    kill =list()    
-    boolNA = pd.isna(df[col])
-    idu = df[boolNA]["id"].unique()
-    ixval = df.index.values
-    if find_alt == False:
-        for s in idu:
-            kill.extend(ixval[s==df.id].tolist()) 
+def replace_NA_Persons(df,colX):
+    colM = df[colX].copy()
+    masK = colM.isna().to_numpy()
+    iDD = colM[masK].reset_index("id")["id"]
+    to_searchIN = colM.reset_index("Date")
+    to_search = to_searchIN.loc[set(iDD),:]    
+    to_searchIN = to_search.reset_index("id")
+    if df.dtypes[colX] =="float64":
+        replS = to_searchIN.groupby("id")[colX].mean()
     else:
-        for s in idu:
-            bol = s==df.id
-            sv = df.id[bol]
-            val = df[sv.iloc[0] == df.id][col]
-            if len(val) >0:
-                df[bol][col] = val
-            else:
-                kill.extend(ixval.id[bol].to.list())
-                
-                
+        replS = to_searchIN.groupby("id")[colX].apply(lambda x: x.unique()[0])
+    replacing = dict(zip(replS.index.values.tolist(),replS.tolist()))
+    colK = colM[masK]
+    ixx = colK.index
+    colV = colK.reset_index("id")
+    res=colV["id"].map(replacing).to_numpy()
+    colM[masK] = res       
+    return(colM) 
+    
+    
+    
+## the function defines a lookup table 
+ ### this function separates into a reference NONA field which does not contain NAs in feature X; then for continuous
+### variables deciles are calculated and according to them for other other variables the most common values are taken
+### for comparision; for categorical NA features simply the the labels are taken    
+    
+def lookuptable(colX,mm):
+    colNA = mm[colX]
+    mask = colNA.isna().to_numpy()
+    NAfield = mm[mask].loc[:,:"customer_segment"].copy()
+    NONA = mm[~mask].loc[:,:"customer_segment"].copy()
+    
+    colto_use = NAfield.isna().sum() ==0
+    colto_use[colX]=True
+    
+    NAfield= NAfield[colto_use.index[colto_use]]
+    NONA = NONA[colto_use.index[colto_use]]
+    
+    NONA.reset_index("id",inplace=True)    
+    NONA.drop_duplicates("id",inplace=True)    
+    NONA.drop("id",axis=1,inplace=True)
    
+    refCOL = NONA[colX]
+    for g in NONA.columns:
+        if NONA.dtypes[g].name =="float64":
+            NONA[g] = pd.qcut(NONA[g],10,duplicates="drop")
+    
+    refTabel = NONA.groupby(colX)[NONA.columns.drop(colX)].apply(lambda x: x.mode())
+    r_1 = pd.concat([NONA[colX],refCOL],axis=1)
+    r_1.columns = [colX,colX+"_"]
+    if mm.dtypes[colX].name=="category":
+        meanS = refTabel.reset_index(level=0)[colX].values
+    else:
+        meanS =  r_1.groupby(colX).mean().to_numpy()    
+    xa = NAfield.pop(colX)
+    xa = xa.to_numpy()
+    xa1 = NONA.pop(colX)
+    for gg in range(refTabel.shape[0]):
+        booLK = refTabel.iloc[gg,:] == NAfield
+        xa[np.where(booLK.sum(axis=1)> NAfield.shape[1]-5 )] = meanS[gg]
+    
+    output_col = mm[colX].copy()
+    output_col.loc[NAfield.index] = xa    
+    return(output_col)
+
+
